@@ -9,10 +9,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
-# 429/503 시 자동 폴백 (부하가 적은 lite 모델 우선)
+# 단종·미지원 모델 → 대체 (Secrets에 구버전 이름이 남아 있을 때)
+_DEPRECATED_MODEL_ALIASES: dict[str, str] = {
+    "gemini-1.5-flash-8b": "gemini-2.5-flash-lite",
+    "gemini-1.5-flash": "gemini-2.5-flash-lite",
+    "gemini-1.5-pro": "gemini-2.5-flash",
+}
+# 429/503 시 자동 폴백 (API v1beta에서 generateContent 지원 모델만)
 _GEMINI_MODEL_FALLBACKS: tuple[str, ...] = (
     "gemini-2.5-flash-lite",
-    "gemini-1.5-flash-8b",
+    "gemini-2.0-flash-lite",
     "gemini-2.0-flash",
     "gemini-2.5-flash",
 )
@@ -98,28 +104,33 @@ def get_gemini_api_key() -> str:
     return ""
 
 
+def _normalize_gemini_model(model: str) -> str:
+    """Map deprecated model ids to currently available ones."""
+    cleaned = model.strip()
+    if not cleaned or not cleaned.isascii():
+        return _DEFAULT_GEMINI_MODEL
+    return _DEPRECATED_MODEL_ALIASES.get(cleaned, cleaned)
+
+
 def get_gemini_model() -> str:
     """Return Gemini model id (ASCII only)."""
     model = os.getenv("GEMINI_MODEL", "").strip()
     if not model:
         model = _read_streamlit_secret("GEMINI_MODEL") or ""
-    if not model or not model.isascii():
-        return _DEFAULT_GEMINI_MODEL
-    return model
+    return _normalize_gemini_model(model) if model else _DEFAULT_GEMINI_MODEL
 
 
 def get_gemini_model_candidates(preferred: str | None = None) -> tuple[str, ...]:
-    """Ordered model list for primary call + 429 quota fallback."""
-    primary = (preferred or get_gemini_model()).strip()
-    if not primary.isascii():
-        primary = _DEFAULT_GEMINI_MODEL
+    """Ordered model list for primary call + 429/503/404 fallback."""
+    primary = _normalize_gemini_model((preferred or get_gemini_model()).strip())
 
     seen: set[str] = set()
     ordered: list[str] = []
     for name in (primary, *_GEMINI_MODEL_FALLBACKS):
-        if name not in seen:
-            seen.add(name)
-            ordered.append(name)
+        normalized = _normalize_gemini_model(name)
+        if normalized not in seen:
+            seen.add(normalized)
+            ordered.append(normalized)
     return tuple(ordered)
 
 

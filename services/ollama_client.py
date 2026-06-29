@@ -82,8 +82,13 @@ def _is_transient_error(exc: Exception) -> bool:
     )
 
 
+def _is_model_not_found(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "404" in message or "not found" in message or "not supported for generatecontent" in message
+
+
 def _should_fallback_model(exc: Exception) -> bool:
-    return _is_quota_error(exc) or _is_transient_error(exc)
+    return _is_quota_error(exc) or _is_transient_error(exc) or _is_model_not_found(exc)
 
 
 def _retry_delay_seconds(exc: Exception, attempt: int, *, default: float = 3.0) -> float:
@@ -114,7 +119,7 @@ def _transient_error_message(model: str) -> LLMClientError:
         "1) **1~3분 후** 다시 '분석 시작' 클릭 (일시적 트래픽 급증)\n"
         "2) Streamlit Secrets에서 모델 변경:\n"
         '   `GEMINI_MODEL = "gemini-2.5-flash-lite"`\n'
-        "3) 그래도 실패하면 `gemini-1.5-flash-8b` 시도"
+        "3) 그래도 실패하면 `gemini-2.0-flash-lite` 시도"
     )
 
 
@@ -205,6 +210,9 @@ def ask_gpt(
                     ) from exc
                 if _should_fallback_model(exc):
                     last_retryable_exc = exc
+                    # 404: model deprecated — skip retries, try next model immediately
+                    if _is_model_not_found(exc):
+                        break
                     if attempt < _MAX_RETRIES_PER_MODEL - 1:
                         time.sleep(_retry_delay_seconds(exc, attempt))
                         continue
@@ -216,5 +224,12 @@ def ask_gpt(
             raise _quota_error_message(last_model) from last_retryable_exc
         if _is_transient_error(last_retryable_exc):
             raise _transient_error_message(last_model) from last_retryable_exc
+        if _is_model_not_found(last_retryable_exc):
+            raise LLMClientError(
+                "지정한 Gemini 모델을 찾을 수 없습니다 (404).\n\n"
+                f"• 마지막 시도: {last_model}\n"
+                "• Streamlit Secrets의 `GEMINI_MODEL`을 아래 중 하나로 설정하세요:\n"
+                '  `gemini-2.5-flash-lite` (권장) 또는 `gemini-2.0-flash`'
+            ) from last_retryable_exc
 
     raise LLMClientError("Gemini API 호출에 실패했습니다. 잠시 후 다시 시도해 주세요.")
