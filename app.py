@@ -16,9 +16,11 @@ from utils.config import (
     APP_TITLE,
     LLM_PROVIDER,
     PAGE_ICON,
+    bootstrap_secrets,
     get_gemini_model,
     is_llm_configured,
 )
+from utils.llm_status import render_llm_config_error
 from utils.constants import (
     ANALYSIS_TYPE_OPTIONS,
     DEFAULT_INVESTMENT_PROFILE_INDEX,
@@ -84,10 +86,7 @@ def render_sidebar() -> tuple[str, str, str, bool]:
         st.caption(f"제공: {LLM_PROVIDER}")
         st.caption(f"모델: {get_gemini_model()}")
         if not is_llm_configured():
-            st.warning(
-                "GEMINI_API_KEY가 없거나 형식이 올바르지 않습니다. "
-                ".env 또는 Streamlit Secrets에 AIza... 키를 설정하세요."
-            )
+            st.warning("GEMINI_API_KEY 미설정 — 분석 전 Secrets 설정 필요")
 
         st.divider()
         st.markdown("##### 분석 에이전트")
@@ -119,12 +118,7 @@ def render_result_section(
         return
 
     if not is_llm_configured():
-        st.error(
-            "GEMINI_API_KEY가 설정되지 않았습니다.\n\n"
-            "로컬: `.env` 파일에 키 추가\n"
-            "Streamlit Cloud: Secrets에 `GEMINI_API_KEY` 설정\n\n"
-            "무료 발급: https://aistudio.google.com/apikey"
-        )
+        st.error(render_llm_config_error())
         return
 
     request = AnalysisRequest(
@@ -149,6 +143,7 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
 
+    bootstrap_secrets()
     _init_session_state()
 
     market, analysis_type, investment_profile, dark_mode = render_sidebar()
