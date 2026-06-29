@@ -1,12 +1,11 @@
-"""Translate foreign-language text to Korean via Ollama."""
+"""Translate foreign-language news to Korean (minimal Gemini usage)."""
 
 from __future__ import annotations
 
 import json
 import re
 
-from services.korean_localizer import apply_deterministic_patch, ensure_korean_text
-from services.korean_localizer import korean_ratio
+from services.korean_localizer import apply_deterministic_patch, korean_ratio
 from services.news import NewsItem
 from services.ollama_client import OllamaClientError, ask_gpt
 
@@ -31,7 +30,12 @@ def needs_translation(text: str, threshold: float = 0.35) -> bool:
 
 
 def translate_news_items(items: list[NewsItem]) -> list[NewsItem]:
-    """Translate foreign news titles and summaries to Korean."""
+    """
+    Translate foreign news titles/summaries to Korean.
+
+    Uses a single Gemini call for the whole batch. On quota errors, returns
+    originals (coach still summarizes news in Korean).
+    """
     if not items:
         return items
 
@@ -56,7 +60,7 @@ def translate_news_items(items: list[NewsItem]) -> list[NewsItem]:
 
 
 def _translate_batch(items: list[NewsItem]) -> list[NewsItem]:
-    """Translate a batch of news items in a single Ollama call."""
+    """Translate a batch of news items in a single Gemini call."""
     lines: list[str] = []
     for index, item in enumerate(items, start=1):
         lines.append(f"{index}. 제목: {item.title}")
@@ -73,10 +77,12 @@ def _translate_batch(items: list[NewsItem]) -> list[NewsItem]:
 
     translated: list[NewsItem] = []
     for original, entry in zip(items, parsed):
-        title = str(entry.get("title") or original.title).strip()
-        summary = str(entry.get("summary") or original.summary).strip()
-        title = _sanitize_news_field(title, original.title)
-        summary = _sanitize_news_field(summary, original.summary)
+        title = apply_deterministic_patch(
+            str(entry.get("title") or original.title).strip()
+        )
+        summary = apply_deterministic_patch(
+            str(entry.get("summary") or original.summary).strip()
+        )
         translated.append(
             NewsItem(
                 title=title or original.title,
@@ -87,26 +93,6 @@ def _translate_batch(items: list[NewsItem]) -> list[NewsItem]:
             )
         )
     return translated
-
-
-def _sanitize_news_field(text: str, fallback: str) -> str:
-    """번역 결과를 한국어 단일 언어로 정규화."""
-    cleaned = apply_deterministic_patch(text)
-    if korean_ratio(cleaned) >= 0.35 and not _has_obvious_foreign(cleaned):
-        return cleaned or fallback
-
-    try:
-        result = ensure_korean_text(cleaned, use_llm=True, max_attempts=2)
-        return result or fallback
-    except OllamaClientError:
-        return cleaned or fallback
-
-
-def _has_obvious_foreign(text: str) -> bool:
-    """빠른 외국어 잔존 검사 (뉴스 필드용)."""
-    from services.korean_localizer import contains_foreign_prose
-
-    return contains_foreign_prose(text)
 
 
 def _parse_translation_json(raw: str, expected_count: int) -> list[dict]:

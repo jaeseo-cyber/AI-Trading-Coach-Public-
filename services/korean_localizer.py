@@ -23,7 +23,7 @@ _DOLLAR_AMOUNT_RE = re.compile(
 )
 _ENGLISH_BEFORE_HANGUL_RE = re.compile(r"[A-Za-z]{2,}(?=[가-힣])")
 
-_MAX_REWRITE_ATTEMPTS = 6
+_MAX_REWRITE_ATTEMPTS = 1
 
 _BASE_ALLOWED: frozenset[str] = frozenset({
     "AI", "BB", "CEO", "CFO", "DRAM", "EPS", "ETF", "HBM", "INC", "IPO",
@@ -432,36 +432,19 @@ def localize_coach_analysis(
     current = apply_deterministic_patch(text)
 
     try:
-        for attempt in range(_MAX_REWRITE_ATTEMPTS):
-            current = _scrub_remaining_foreign(current, allowed)
-            if not contains_foreign_prose(current, allowed):
-                return current
-
-            current = _rewrite_via_ollama(
-                current,
-                ticker=ticker,
-                company_name=company_name,
-                strict=attempt > 0,
-            )
-
         current = _scrub_remaining_foreign(current, allowed)
-        if contains_foreign_prose(current, allowed):
-            current = _final_korean_pass(
-                current, ticker=ticker, company_name=company_name
-            )
-            current = _scrub_remaining_foreign(current, allowed)
+        if not contains_foreign_prose(current, allowed):
+            return current
+        if korean_ratio(current) >= 0.72:
+            return current
 
-        for _ in range(3):
-            if not contains_foreign_prose(current, allowed):
-                break
-            current = _rewrite_via_ollama(
-                current,
-                ticker=ticker,
-                company_name=company_name,
-                strict=True,
-            )
-            current = _scrub_remaining_foreign(current, allowed)
-
+        current = _rewrite_via_ollama(
+            current,
+            ticker=ticker,
+            company_name=company_name,
+            strict=False,
+        )
+        current = _scrub_remaining_foreign(current, allowed)
         return current
     except OllamaClientError:
         return _scrub_remaining_foreign(

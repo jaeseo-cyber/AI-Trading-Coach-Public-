@@ -47,7 +47,7 @@ git push -u origin main
 
 ```toml
 GEMINI_API_KEY = "본인_Gemini_API_키"
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-2.0-flash"
 ```
 
 6. **Deploy!**

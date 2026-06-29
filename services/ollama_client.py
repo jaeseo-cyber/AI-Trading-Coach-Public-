@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import re
+import time
+
 from google import genai
 from google.genai import types
 
-from utils.config import get_gemini_api_key, get_gemini_model, validate_gemini_api_key
+from utils.config import (
+    get_gemini_api_key,
+    get_gemini_model,
+    get_gemini_model_candidates,
+    validate_gemini_api_key,
+)
 from utils.korean_rules import merge_korean_system_prompt
 
 
@@ -15,13 +23,15 @@ class LLMClientError(Exception):
 
 OllamaClientError = LLMClientError
 
+_QUOTA_RE = re.compile(r"retry in (\d+(?:\.\d+)?)s", re.IGNORECASE)
+
 
 def _api_key_error(exc: ValueError) -> LLMClientError:
     if exc.args and exc.args[0] == "non_ascii":
         return LLMClientError(
             "GEMINI_API_KEY 값이 올바르지 않습니다.\n"
             "Streamlit Secrets(또는 .env)에 한글·설명 문구가 아닌 "
-            "Google AI Studio에서 발급한 영문 API 키(AIza...로 시작)만 입력했는지 확인하세요.\n"
+            "Google AI Studio에서 발급한 영문 API 키만 입력했는지 확인하세요.\n"
             "발급: https://aistudio.google.com/apikey"
         )
     if exc.args and exc.args[0] == "invalid_format":
@@ -47,6 +57,55 @@ def _get_client() -> genai.Client:
     return genai.Client(api_key=api_key)
 
 
+def _is_quota_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "429" in message
+        or "resource_exhausted" in message
+        or "quota exceeded" in message
+    )
+
+
+def _retry_delay_seconds(exc: Exception, *, default: float = 5.0) -> float:
+    match = _QUOTA_RE.search(str(exc))
+    if match:
+        return float(match.group(1)) + 0.5
+    return default
+
+
+def _quota_error_message(model: str) -> LLMClientError:
+    return LLMClientError(
+        "Gemini API 무료 사용 한도(429)에 도달했습니다.\n\n"
+        f"• 사용 모델: {model}\n"
+        "• 무료 티어는 하루 요청 수(RPD)가 적습니다. "
+        "특히 미국 주식은 뉴스·분석 과정에서 API가 여러 번 호출됩니다.\n\n"
+        "**해결 방법**\n"
+        "1) 10~30분 후 다시 시도 (일일 한도는 태평양 자정에 초기화)\n"
+        "2) Streamlit Secrets에서 `GEMINI_MODEL = \"gemini-2.0-flash\"` 로 변경 "
+        "(무료 한도가 더 넉넉한 편)\n"
+        "3) Google AI Studio에서 사용량 확인: https://ai.dev/rate-limit\n\n"
+        "한도 상세: https://ai.google.dev/gemini-api/docs/rate-limits"
+    )
+
+
+def _generate_once(
+    client: genai.Client,
+    *,
+    model_name: str,
+    user_content: types.Content,
+    config: types.GenerateContentConfig | None,
+) -> str:
+    response = client.models.generate_content(
+        model=model_name,
+        contents=[user_content],
+        config=config,
+    )
+    text = (response.text or "").strip()
+    if not text:
+        raise LLMClientError("Gemini가 빈 응답을 반환했습니다.")
+    return text
+
+
 def ask_gpt(
     question: str,
     *,
@@ -69,40 +128,60 @@ def ask_gpt(
         config_kwargs["temperature"] = temperature
 
     config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
-    model_name = (model or get_gemini_model()).strip()
-    if not model_name.isascii():
-        model_name = get_gemini_model()
 
+    preferred = (model or get_gemini_model()).strip()
+    if not preferred.isascii():
+        preferred = get_gemini_model()
+
+    candidates = get_gemini_model_candidates(preferred)
     user_content = types.Content(
         role="user",
         parts=[types.Part.from_text(text=question)],
     )
 
+    last_quota_exc: Exception | None = None
+    last_model = preferred
+
     try:
         client = _get_client()
-        response = client.models.generate_content(
-            model=model_name,
-            contents=[user_content],
-            config=config,
-        )
-        text = (response.text or "").strip()
-        if not text:
-            raise LLMClientError("Gemini가 빈 응답을 반환했습니다.")
-        return text
     except LLMClientError:
         raise
-    except UnicodeEncodeError as exc:
-        raise LLMClientError(
-            "Gemini API 요청 인코딩 오류입니다. "
-            "GEMINI_API_KEY에 한글이나 특수문자가 섞여 있지 않은지 "
-            "Streamlit Secrets 설정을 확인해 주세요."
-        ) from exc
     except Exception as exc:
-        message = str(exc)
-        if "ascii" in message.lower() and "encode" in message.lower():
-            raise LLMClientError(
-                "Gemini API 요청 인코딩 오류입니다. "
-                "GEMINI_API_KEY에 한글 placeholder(예: '여기에 키 입력')가 "
-                "들어가 있지 않은지 Streamlit Secrets를 확인해 주세요."
-            ) from exc
         raise LLMClientError(f"Gemini API 호출 오류: {exc}") from exc
+
+    for model_name in candidates:
+        last_model = model_name
+        for attempt in range(2):
+            try:
+                return _generate_once(
+                    client,
+                    model_name=model_name,
+                    user_content=user_content,
+                    config=config,
+                )
+            except LLMClientError:
+                raise
+            except UnicodeEncodeError as exc:
+                raise LLMClientError(
+                    "Gemini API 요청 인코딩 오류입니다. "
+                    "GEMINI_API_KEY에 한글이 섞여 있지 않은지 확인해 주세요."
+                ) from exc
+            except Exception as exc:
+                message = str(exc)
+                if "ascii" in message.lower() and "encode" in message.lower():
+                    raise LLMClientError(
+                        "Gemini API 요청 인코딩 오류입니다. "
+                        "GEMINI_API_KEY에 한글 placeholder가 들어가 있지 않은지 확인해 주세요."
+                    ) from exc
+                if _is_quota_error(exc):
+                    last_quota_exc = exc
+                    if attempt == 0:
+                        time.sleep(_retry_delay_seconds(exc))
+                        continue
+                    break
+                raise LLMClientError(f"Gemini API 호출 오류: {exc}") from exc
+
+    if last_quota_exc is not None:
+        raise _quota_error_message(last_model) from last_quota_exc
+
+    raise LLMClientError("Gemini API 호출에 실패했습니다. 잠시 후 다시 시도해 주세요.")

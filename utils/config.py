@@ -8,7 +8,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+_DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+# 무료 티어 한도가 더 넉넉한 모델 우선 (429 시 자동 폴백)
+_GEMINI_MODEL_FALLBACKS: tuple[str, ...] = (
+    "gemini-2.0-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-1.5-flash-8b",
+    "gemini-2.5-flash",
+)
 _PLACEHOLDER_KEYS = frozenset(
     {
         "your_gemini_api_key",
@@ -99,6 +106,21 @@ def get_gemini_model() -> str:
     if not model or not model.isascii():
         return _DEFAULT_GEMINI_MODEL
     return model
+
+
+def get_gemini_model_candidates(preferred: str | None = None) -> tuple[str, ...]:
+    """Ordered model list for primary call + 429 quota fallback."""
+    primary = (preferred or get_gemini_model()).strip()
+    if not primary.isascii():
+        primary = _DEFAULT_GEMINI_MODEL
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in (primary, *_GEMINI_MODEL_FALLBACKS):
+        if name not in seen:
+            seen.add(name)
+            ordered.append(name)
+    return tuple(ordered)
 
 
 def validate_gemini_api_key(key: str) -> None:
