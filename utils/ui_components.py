@@ -12,7 +12,14 @@ from services.news import NewsItem
 from services.stock_chart import PLOTLY_CHART_CONFIG, build_price_chart
 from services.stock_data import StockMetrics
 from services.technical_analysis import TechnicalAnalysisResult
-from utils.config import APP_TITLE, GEMINI_MODEL, LLM_PROVIDER, PAGE_ICON, PROJECT_SUBTITLE, is_llm_configured
+from utils.config import (
+    APP_TITLE,
+    LLM_PROVIDER,
+    PAGE_ICON,
+    PROJECT_SUBTITLE,
+    get_gemini_model,
+    is_llm_configured,
+)
 from utils.constants import CHART_COLUMN_RATIO, TECH_COLUMN_RATIO
 from utils.formatters import format_indicator, format_market_cap, format_price, format_ratio
 from utils.html_builder import (
@@ -229,7 +236,7 @@ def render_ai_opinion_card(result: CoordinatorResult) -> None:
 
     render_section_header(
         "AI 투자 코치",
-        f"모델: {GEMINI_MODEL} · 멀티 에이전트 종합 분석",
+        f"모델: {get_gemini_model()} · 멀티 에이전트 종합 분석",
     )
 
     body_html = markdown_to_html(coach.analysis)

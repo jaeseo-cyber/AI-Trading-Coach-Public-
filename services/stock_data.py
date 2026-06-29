@@ -88,27 +88,24 @@ def _resolve_current_price(stock: yf.Ticker, info: dict, ticker: str) -> float:
 
 
 def fetch_stock_metrics(ticker: str, market: str) -> StockMetrics:
-    """Fetch key metrics for a ticker from Yahoo Finance (KRX fallback)."""
+    """Fetch key metrics for a ticker (Yahoo Finance → FinanceDataReader fallback)."""
     symbol = normalize_ticker(ticker, market)
 
-    if market.startswith("한국"):
-        try:
-            return _fetch_metrics_yfinance(symbol, ticker, market)
-        except StockDataError:
-            return _fetch_metrics_krx(symbol, ticker, market)
-
-    return _fetch_metrics_yfinance(symbol, ticker, market)
-
-
-def _fetch_metrics_krx(symbol: str, ticker: str, market: str) -> StockMetrics:
-    """Korean stocks: FinanceDataReader when Yahoo Finance is blocked (e.g. Cloud)."""
     try:
-        from services.krx_data import fetch_krx_metrics
+        return _fetch_metrics_yfinance(symbol, ticker, market)
+    except StockDataError:
+        return _fetch_metrics_fdr(symbol, ticker, market)
 
-        data = fetch_krx_metrics(symbol, market)
+
+def _fetch_metrics_fdr(symbol: str, ticker: str, market: str) -> StockMetrics:
+    """FinanceDataReader when Yahoo Finance is blocked (e.g. Streamlit Cloud)."""
+    try:
+        from services.fdr_data import fetch_fdr_metrics
+
+        data = fetch_fdr_metrics(symbol, market)
     except Exception as exc:
         raise StockDataError(
-            "주식 데이터 서버(Yahoo/KRX)에 연결하지 못했습니다. "
+            "주식 데이터 서버(Yahoo/FinanceDataReader)에 연결하지 못했습니다. "
             "잠시 후 다시 시도해 주세요. (휴대폰·PC 인터넷 문제가 아닙니다)"
         ) from exc
 

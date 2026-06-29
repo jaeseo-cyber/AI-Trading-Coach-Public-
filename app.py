@@ -1,10 +1,24 @@
 """AI Trading Coach - Streamlit application entry point."""
 
+from __future__ import annotations
+
+import os
+
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+os.environ.setdefault("LANG", "C.UTF-8")
+os.environ.setdefault("LC_ALL", "C.UTF-8")
+
 import streamlit as st
 
 from agents.schemas import AnalysisRequest
 from coordinator import AnalysisCoordinator
-from utils.config import APP_TITLE, GEMINI_MODEL, LLM_PROVIDER, PAGE_ICON, is_llm_configured
+from utils.config import (
+    APP_TITLE,
+    LLM_PROVIDER,
+    PAGE_ICON,
+    get_gemini_model,
+    is_llm_configured,
+)
 from utils.constants import (
     ANALYSIS_TYPE_OPTIONS,
     DEFAULT_INVESTMENT_PROFILE_INDEX,
@@ -68,9 +82,12 @@ def render_sidebar() -> tuple[str, str, str, bool]:
         st.divider()
         st.markdown("##### AI 연결")
         st.caption(f"제공: {LLM_PROVIDER}")
-        st.caption(f"모델: {GEMINI_MODEL}")
+        st.caption(f"모델: {get_gemini_model()}")
         if not is_llm_configured():
-            st.warning("GEMINI_API_KEY가 없습니다. .env에 키를 설정하세요.")
+            st.warning(
+                "GEMINI_API_KEY가 없거나 형식이 올바르지 않습니다. "
+                ".env 또는 Streamlit Secrets에 AIza... 키를 설정하세요."
+            )
 
         st.divider()
         st.markdown("##### 분석 에이전트")
