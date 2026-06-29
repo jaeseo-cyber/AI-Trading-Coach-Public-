@@ -22,6 +22,8 @@ _GEMINI_MODEL_FALLBACKS: tuple[str, ...] = (
     "gemini-2.0-flash",
     "gemini-2.5-flash",
 )
+_DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+_SUPPORTED_LLM_PROVIDERS = frozenset({"gemini", "groq"})
 _PLACEHOLDER_KEYS = frozenset(
     {
         "your_gemini_api_key",
@@ -68,6 +70,9 @@ def _apply_streamlit_secrets() -> None:
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",
         "GEMINI_MODEL",
+        "GROQ_API_KEY",
+        "GROQ_MODEL",
+        "LLM_PROVIDER",
         "NEWS_API_KEY",
         "STREAMLIT_SERVER_ADDRESS",
         "STREAMLIT_SERVER_PORT",
@@ -154,16 +159,67 @@ def validate_gemini_api_key(key: str) -> None:
         raise ValueError("invalid_format")
 
 
+def get_groq_api_key() -> str:
+    """Return Groq API key."""
+    env_val = os.getenv("GROQ_API_KEY", "").strip()
+    if env_val:
+        return _clean_secret(env_val)
+    secret_val = _read_streamlit_secret("GROQ_API_KEY")
+    if secret_val:
+        os.environ["GROQ_API_KEY"] = secret_val
+        return secret_val
+    return ""
+
+
+def get_groq_model() -> str:
+    """Return Groq model id."""
+    model = os.getenv("GROQ_MODEL", "").strip()
+    if not model:
+        model = _read_streamlit_secret("GROQ_MODEL") or ""
+    if not model or not model.isascii():
+        return _DEFAULT_GROQ_MODEL
+    return model
+
+
+def get_llm_provider() -> str:
+    """Return active LLM provider: gemini (default) or groq."""
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    if not provider:
+        provider = (_read_streamlit_secret("LLM_PROVIDER") or "gemini").lower()
+    return provider if provider in _SUPPORTED_LLM_PROVIDERS else "gemini"
+
+
+def get_llm_provider_label() -> str:
+    """Human-readable provider name for UI."""
+    return "Groq" if get_llm_provider() == "groq" else "Google Gemini"
+
+
+def get_active_llm_model() -> str:
+    """Return model name for the active provider."""
+    if get_llm_provider() == "groq":
+        return get_groq_model()
+    return get_gemini_model()
+
+
 def get_llm_config_error() -> str | None:
     """Return error code when LLM is not ready, else None."""
-    key = get_gemini_api_key()
-    if not key:
-        return "missing"
-    try:
-        validate_gemini_api_key(key)
-    except ValueError as exc:
-        return str(exc.args[0]) if exc.args else "invalid"
-    return None
+    provider = get_llm_provider()
+    has_groq = bool(get_groq_api_key())
+    has_gemini = bool(get_gemini_api_key())
+
+    if provider == "groq":
+        return None if has_groq else "missing_groq"
+
+    if has_gemini:
+        try:
+            validate_gemini_api_key(get_gemini_api_key())
+            return None
+        except ValueError as exc:
+            if has_groq:
+                return None
+            return str(exc.args[0]) if exc.args else "invalid"
+
+    return None if has_groq else "missing"
 
 
 APP_TITLE = "AI 트레이딩 코치"
@@ -183,5 +239,5 @@ STREAMLIT_SERVER_PORT = int(os.getenv("STREAMLIT_SERVER_PORT", "8501"))
 
 
 def is_llm_configured() -> bool:
-    """Return True when a plausible Gemini API key is present."""
+    """Return True when Gemini and/or Groq API key is present."""
     return get_llm_config_error() is None

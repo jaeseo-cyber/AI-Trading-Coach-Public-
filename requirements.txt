@@ -1,6 +1,7 @@
 # AI Trading Coach
 streamlit>=1.32.0,<2.0.0
 google-genai>=1.0.0,<2.0.0
+groq>=0.13.0,<1.0.0
 python-dotenv>=1.0.0,<2.0.0
 yfinance>=0.2.40,<2.0.0
 plotly>=5.18.0,<7.0.0

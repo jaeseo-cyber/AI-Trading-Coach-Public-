@@ -14,10 +14,11 @@ from agents.schemas import AnalysisRequest
 from coordinator import AnalysisCoordinator
 from utils.config import (
     APP_TITLE,
-    LLM_PROVIDER,
     PAGE_ICON,
     bootstrap_secrets,
-    get_gemini_model,
+    get_active_llm_model,
+    get_groq_api_key,
+    get_llm_provider_label,
     is_llm_configured,
 )
 from utils.llm_status import render_llm_config_error
@@ -83,10 +84,12 @@ def render_sidebar() -> tuple[str, str, str, bool]:
 
         st.divider()
         st.markdown("##### AI 연결")
-        st.caption(f"제공: {LLM_PROVIDER}")
-        st.caption(f"모델: {get_gemini_model()}")
+        st.caption(f"제공: {get_llm_provider_label()}")
+        st.caption(f"모델: {get_active_llm_model()}")
+        if get_groq_api_key():
+            st.caption("Groq 백업: 설정됨 (Gemini 실패 시 자동 전환)")
         if not is_llm_configured():
-            st.warning("GEMINI_API_KEY 미설정 — 분석 전 Secrets 설정 필요")
+            st.warning("AI API 키 미설정 — Gemini 또는 Groq 키 필요")
 
         st.divider()
         st.markdown("##### 분석 에이전트")

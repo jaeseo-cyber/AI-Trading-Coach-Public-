@@ -14,10 +14,10 @@ from services.stock_data import StockMetrics
 from services.technical_analysis import TechnicalAnalysisResult
 from utils.config import (
     APP_TITLE,
-    LLM_PROVIDER,
     PAGE_ICON,
     PROJECT_SUBTITLE,
-    get_gemini_model,
+    get_active_llm_model,
+    get_llm_provider_label,
     is_llm_configured,
 )
 from utils.constants import CHART_COLUMN_RATIO, TECH_COLUMN_RATIO
@@ -236,7 +236,7 @@ def render_ai_opinion_card(result: CoordinatorResult) -> None:
 
     render_section_header(
         "AI 투자 코치",
-        f"모델: {get_gemini_model()} · 멀티 에이전트 종합 분석",
+        f"모델: {get_active_llm_model()} · 멀티 에이전트 종합 분석",
     )
 
     body_html = markdown_to_html(coach.analysis)
