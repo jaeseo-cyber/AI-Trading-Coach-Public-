@@ -14,17 +14,29 @@ def _krx_code(ticker: str) -> str:
 
 
 def fetch_krx_history(ticker: str, *, start: str | None = None) -> pd.DataFrame:
-    """Fetch OHLCV history from KRX/Naver via FinanceDataReader."""
+    """Fetch OHLCV history from Naver/KRX via FinanceDataReader."""
     import FinanceDataReader as fdr
 
     code = _krx_code(ticker)
-    kwargs: dict = {}
+    # FDR v0.9+: DataReader('005930') — 'KRX' 두 번째 인자는 start 날짜로 해석됨 (버그 원인)
     if start:
-        kwargs["start"] = start
-    df = fdr.DataReader(code, "KRX", **kwargs)
+        df = fdr.DataReader(code, start)
+    else:
+        df = fdr.DataReader(code)
     if df is None or df.empty:
         raise ValueError(f"KRX 데이터 없음: {code}")
     return df
+
+
+def _fetch_listing_row(code: str) -> pd.Series | None:
+    """Return KRX listing row for a single code."""
+    import FinanceDataReader as fdr
+
+    listing = fdr.StockListing("KRX")
+    rows = listing[listing["Code"].astype(str).str.zfill(6) == code]
+    if rows.empty:
+        return None
+    return rows.iloc[0]
 
 
 def fetch_krx_metrics(ticker: str, market: str) -> dict:
@@ -34,13 +46,8 @@ def fetch_krx_metrics(ticker: str, market: str) -> dict:
     Returns keys: name, currency, current_price, market_cap, per, pbr, eps,
     fifty_two_week_high, fifty_two_week_low, symbol
     """
-    import FinanceDataReader as fdr
-
     code = _krx_code(ticker)
-    history = fdr.DataReader(code, "KRX")
-    if history.empty:
-        raise ValueError(f"시세 없음: {code}")
-
+    history = fetch_krx_history(ticker)
     current_price = float(history["Close"].iloc[-1])
     high_52 = float(history["Close"].tail(252).max()) if len(history) >= 20 else None
     low_52 = float(history["Close"].tail(252).min()) if len(history) >= 20 else None
@@ -49,15 +56,13 @@ def fetch_krx_metrics(ticker: str, market: str) -> dict:
     market_cap = per = pbr = eps = None
 
     try:
-        snap = fdr.SnapReader("KRX")
-        row = snap[snap.index.astype(str).str.zfill(6) == code]
-        if not row.empty:
-            r = row.iloc[0]
-            name = str(r.get("Name", r.name if hasattr(r, "name") else code))
-            market_cap = safe_to_float(r.get("Marcap"))
-            per = safe_to_float(r.get("PER"))
-            pbr = safe_to_float(r.get("PBR"))
-            eps = safe_to_float(r.get("EPS"))
+        row = _fetch_listing_row(code)
+        if row is not None:
+            name = str(row.get("Name", code))
+            market_cap = safe_to_float(row.get("Marcap"))
+            listing_close = safe_to_float(row.get("Close"))
+            if listing_close is not None:
+                current_price = listing_close
     except Exception:
         pass
 
