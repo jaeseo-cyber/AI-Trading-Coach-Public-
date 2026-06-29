@@ -8,12 +8,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-_DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
-# 무료 티어 한도가 더 넉넉한 모델 우선 (429 시 자동 폴백)
+_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
+# 429/503 시 자동 폴백 (부하가 적은 lite 모델 우선)
 _GEMINI_MODEL_FALLBACKS: tuple[str, ...] = (
-    "gemini-2.0-flash",
     "gemini-2.5-flash-lite",
     "gemini-1.5-flash-8b",
+    "gemini-2.0-flash",
     "gemini-2.5-flash",
 )
 _PLACEHOLDER_KEYS = frozenset(

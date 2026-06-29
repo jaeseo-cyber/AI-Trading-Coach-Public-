@@ -24,6 +24,7 @@ class LLMClientError(Exception):
 OllamaClientError = LLMClientError
 
 _QUOTA_RE = re.compile(r"retry in (\d+(?:\.\d+)?)s", re.IGNORECASE)
+_MAX_RETRIES_PER_MODEL = 3
 
 
 def _api_key_error(exc: ValueError) -> LLMClientError:
@@ -66,25 +67,54 @@ def _is_quota_error(exc: Exception) -> bool:
     )
 
 
-def _retry_delay_seconds(exc: Exception, *, default: float = 5.0) -> float:
+def _is_transient_error(exc: Exception) -> bool:
+    """503/5xx — server overload; retry or switch model."""
+    message = str(exc).lower()
+    return (
+        "503" in message
+        or "502" in message
+        or "500" in message
+        or "504" in message
+        or "unavailable" in message
+        or "high demand" in message
+        or "overloaded" in message
+        or "try again later" in message
+    )
+
+
+def _should_fallback_model(exc: Exception) -> bool:
+    return _is_quota_error(exc) or _is_transient_error(exc)
+
+
+def _retry_delay_seconds(exc: Exception, attempt: int, *, default: float = 3.0) -> float:
     match = _QUOTA_RE.search(str(exc))
     if match:
         return float(match.group(1)) + 0.5
-    return default
+    return min(default * (2**attempt), 12.0)
 
 
 def _quota_error_message(model: str) -> LLMClientError:
     return LLMClientError(
         "Gemini API 무료 사용 한도(429)에 도달했습니다.\n\n"
         f"• 사용 모델: {model}\n"
-        "• 무료 티어는 하루 요청 수(RPD)가 적습니다. "
-        "특히 미국 주식은 뉴스·분석 과정에서 API가 여러 번 호출됩니다.\n\n"
+        "• 무료 티어는 하루 요청 수(RPD)가 적습니다.\n\n"
         "**해결 방법**\n"
         "1) 10~30분 후 다시 시도 (일일 한도는 태평양 자정에 초기화)\n"
-        "2) Streamlit Secrets에서 `GEMINI_MODEL = \"gemini-2.0-flash\"` 로 변경 "
-        "(무료 한도가 더 넉넉한 편)\n"
-        "3) Google AI Studio에서 사용량 확인: https://ai.dev/rate-limit\n\n"
-        "한도 상세: https://ai.google.dev/gemini-api/docs/rate-limits"
+        "2) Secrets에서 `GEMINI_MODEL = \"gemini-2.5-flash-lite\"` 로 변경\n"
+        "3) 사용량 확인: https://ai.dev/rate-limit"
+    )
+
+
+def _transient_error_message(model: str) -> LLMClientError:
+    return LLMClientError(
+        "Gemini 서버가 일시적으로 과부하 상태입니다 (503).\n\n"
+        f"• 마지막 시도 모델: {model}\n"
+        "• 다른 모델로 자동 재시도했으나 모두 실패했습니다.\n\n"
+        "**해결 방법**\n"
+        "1) **1~3분 후** 다시 '분석 시작' 클릭 (일시적 트래픽 급증)\n"
+        "2) Streamlit Secrets에서 모델 변경:\n"
+        '   `GEMINI_MODEL = "gemini-2.5-flash-lite"`\n'
+        "3) 그래도 실패하면 `gemini-1.5-flash-8b` 시도"
     )
 
 
@@ -139,7 +169,7 @@ def ask_gpt(
         parts=[types.Part.from_text(text=question)],
     )
 
-    last_quota_exc: Exception | None = None
+    last_retryable_exc: Exception | None = None
     last_model = preferred
 
     try:
@@ -151,7 +181,7 @@ def ask_gpt(
 
     for model_name in candidates:
         last_model = model_name
-        for attempt in range(2):
+        for attempt in range(_MAX_RETRIES_PER_MODEL):
             try:
                 return _generate_once(
                     client,
@@ -173,15 +203,18 @@ def ask_gpt(
                         "Gemini API 요청 인코딩 오류입니다. "
                         "GEMINI_API_KEY에 한글 placeholder가 들어가 있지 않은지 확인해 주세요."
                     ) from exc
-                if _is_quota_error(exc):
-                    last_quota_exc = exc
-                    if attempt == 0:
-                        time.sleep(_retry_delay_seconds(exc))
+                if _should_fallback_model(exc):
+                    last_retryable_exc = exc
+                    if attempt < _MAX_RETRIES_PER_MODEL - 1:
+                        time.sleep(_retry_delay_seconds(exc, attempt))
                         continue
                     break
                 raise LLMClientError(f"Gemini API 호출 오류: {exc}") from exc
 
-    if last_quota_exc is not None:
-        raise _quota_error_message(last_model) from last_quota_exc
+    if last_retryable_exc is not None:
+        if _is_quota_error(last_retryable_exc):
+            raise _quota_error_message(last_model) from last_retryable_exc
+        if _is_transient_error(last_retryable_exc):
+            raise _transient_error_message(last_model) from last_retryable_exc
 
     raise LLMClientError("Gemini API 호출에 실패했습니다. 잠시 후 다시 시도해 주세요.")
