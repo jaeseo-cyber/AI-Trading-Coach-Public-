@@ -32,11 +32,34 @@ def fetch_price_history(
     """Fetch historical OHLCV data for charting."""
     symbol = normalize_ticker(ticker, market)
 
+    if market.startswith("한국"):
+        try:
+            return _fetch_history_yfinance(symbol, ticker, period)
+        except StockDataError:
+            return _fetch_history_krx(symbol, ticker)
+
+    return _fetch_history_yfinance(symbol, ticker, period)
+
+
+def _fetch_history_krx(symbol: str, ticker: str) -> pd.DataFrame:
+    try:
+        from services.krx_data import fetch_krx_history
+
+        return fetch_krx_history(symbol)
+    except Exception as exc:
+        raise StockDataError(
+            "차트 데이터 서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요."
+        ) from exc
+
+
+def _fetch_history_yfinance(
+    symbol: str, ticker: str, period: str = PRICE_HISTORY_PERIOD
+) -> pd.DataFrame:
     try:
         history = yf.Ticker(symbol).history(period=period)
     except Exception as exc:
         raise StockDataError(
-            "네트워크 오류로 차트 데이터를 가져오지 못했습니다. "
+            "차트 데이터 서버(Yahoo Finance)에 연결하지 못했습니다. "
             "잠시 후 다시 시도해 주세요."
         ) from exc
 

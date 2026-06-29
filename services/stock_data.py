@@ -88,16 +88,53 @@ def _resolve_current_price(stock: yf.Ticker, info: dict, ticker: str) -> float:
 
 
 def fetch_stock_metrics(ticker: str, market: str) -> StockMetrics:
-    """Fetch key metrics for a ticker from Yahoo Finance."""
+    """Fetch key metrics for a ticker from Yahoo Finance (KRX fallback)."""
     symbol = normalize_ticker(ticker, market)
 
+    if market.startswith("한국"):
+        try:
+            return _fetch_metrics_yfinance(symbol, ticker, market)
+        except StockDataError:
+            return _fetch_metrics_krx(symbol, ticker, market)
+
+    return _fetch_metrics_yfinance(symbol, ticker, market)
+
+
+def _fetch_metrics_krx(symbol: str, ticker: str, market: str) -> StockMetrics:
+    """Korean stocks: FinanceDataReader when Yahoo Finance is blocked (e.g. Cloud)."""
+    try:
+        from services.krx_data import fetch_krx_metrics
+
+        data = fetch_krx_metrics(symbol, market)
+    except Exception as exc:
+        raise StockDataError(
+            "주식 데이터 서버(Yahoo/KRX)에 연결하지 못했습니다. "
+            "잠시 후 다시 시도해 주세요. (휴대폰·PC 인터넷 문제가 아닙니다)"
+        ) from exc
+
+    return StockMetrics(
+        ticker=data["symbol"],
+        name=str(data["name"] or ticker),
+        currency=data["currency"],
+        current_price=data["current_price"],
+        market_cap=data["market_cap"],
+        per=data["per"],
+        pbr=data["pbr"],
+        eps=data["eps"],
+        fifty_two_week_high=data["fifty_two_week_high"],
+        fifty_two_week_low=data["fifty_two_week_low"],
+    )
+
+
+def _fetch_metrics_yfinance(symbol: str, ticker: str, market: str) -> StockMetrics:
+    """Fetch metrics via Yahoo Finance."""
     try:
         stock = yf.Ticker(symbol)
         info = stock.info or {}
     except Exception as exc:
         raise StockDataError(
-            "네트워크 오류로 종목 데이터를 가져오지 못했습니다. "
-            "인터넷 연결을 확인한 뒤 다시 시도해 주세요."
+            "주식 데이터 서버(Yahoo Finance)에 연결하지 못했습니다. "
+            "잠시 후 다시 시도해 주세요. (사용자 기기 인터넷 문제가 아닙니다)"
         ) from exc
 
     if not info or (
